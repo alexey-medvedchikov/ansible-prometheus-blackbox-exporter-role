@@ -1,0 +1,98 @@
+---
+
+- name: create directory for blackbox exporter credentials
+  file:
+    path: "{{ prometheus_blackbox_exporter_config_path | dirname }}"
+    owner: root
+    group: "{{ prometheus_exporters_common_group }}"
+    mode: 0750
+    state: directory
+
+- name: save modules config for blackbox exporter
+  copy:
+    content: |
+      modules:
+        {{ prometheus_blackbox_exporter_modules | to_nice_yaml(indent=2) | indent(2,False) }}
+    dest: "{{ prometheus_blackbox_exporter_config_path }}"
+    owner: root
+    group: "{{ prometheus_exporters_common_group }}"
+    mode: 0640
+  notify:
+    - restart blackbox exporter
+
+- name: download prometheus blackbox exporter binary
+  get_url:
+    url: "{{ prometheus_blackbox_exporter_url }}"
+    dest: "{{ prometheus_exporters_common_dist_dir }}/{{ prometheus_blackbox_exporter_release_name }}.tar.gz"
+
+- name: unarchive binary tarball
+  unarchive:
+    copy: no
+    src: "{{ prometheus_exporters_common_dist_dir }}/{{ prometheus_blackbox_exporter_release_name }}.tar.gz"
+    dest: "{{ prometheus_exporters_common_dist_dir }}"
+    creates: "{{ prometheus_exporters_common_dist_dir }}/{{ prometheus_blackbox_exporter_release_name }}/blackbox_exporter"
+  register: prometheus_blackbox_exporter_updated
+  notify:
+    - restart blackbox exporter
+
+- name: update group and owner for files
+  file:
+    path: "{{ prometheus_blackbox_exporter_release_name }}"
+    recurse: yes
+    owner: "{{ prometheus_exporters_common_user }}"
+    group: "{{ prometheus_exporters_common_group }}"
+  when: prometheus_blackbox_exporter_updated | changed
+
+- name: create symlink to the current release
+  file:
+    src: "{{ prometheus_exporters_common_dist_dir }}/{{ prometheus_blackbox_exporter_release_name }}"
+    path: "{{ prometheus_exporters_common_root_dir }}/blackbox_exporter_current"
+    state: link
+
+- name: create systemd service unit
+  template:
+    src: etc/systemd/system/prometheus-blackbox-exporter.service.j2
+    dest: /etc/systemd/system/prometheus-blackbox-exporter.service
+    owner: root
+    group: root
+    mode: 0644
+  when: ansible_service_mgr == 'systemd'
+  notify:
+    - reenable blackbox exporter service
+    - restart blackbox exporter
+
+- name: Looking which version of upstart is install
+  command: initctl version
+  when: ansible_service_mgr == 'upstart'
+  register: upstart_version
+
+- name: create init service unit
+  template:
+    src: etc/init/prometheus-blackbox-exporter.conf.j2
+    dest: /etc/init/prometheus-blackbox-exporter.conf
+    owner: root
+    group: root
+    mode: 0644
+  when: ansible_service_mgr == 'upstart'
+  notify:
+    - reinit blackbox exporter
+    - restart blackbox exporter
+
+- name: create sysvinit service unit
+  template:
+    src: etc/init.d/prometheus-blackbox-exporter.j2
+    dest: /etc/init.d/prometheus-blackbox-exporter
+    owner: root
+    group: root
+    mode: 0755
+  when: ansible_service_mgr == 'sysvinit'
+  notify:
+    - restart blackbox exporter
+
+- meta: flush_handlers
+
+- name: ensure prometheus blackbox exporter service is enabled and started
+  service:
+    name: prometheus-blackbox-exporter
+    state: started
+    enabled: yes

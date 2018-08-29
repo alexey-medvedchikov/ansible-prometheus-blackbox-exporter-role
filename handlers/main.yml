@@ -1,0 +1,12 @@
+---
+
+- name: reenable blackbox exporter service
+  command: systemctl reenable prometheus-blackbox-exporter.service
+
+- name: reinit blackbox exporter
+  command: initctl reload-configuration
+
+- name: restart blackbox exporter
+  service:
+    name: prometheus-blackbox-exporter
+    state: restarted
